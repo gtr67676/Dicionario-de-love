@@ -1,4 +1,4 @@
-$webhookUrl = "https://discord.com/api/webhooks/1563550985274531890/nmcjdI8zDoYiEV9aoW7miLtlWHLRr7g1eujQtHya92oSWuVUuJdbgmosATTyYFSz4qAi"
+$webhookUrl = ""
 
 function Send-ToWebhook {
     param (
